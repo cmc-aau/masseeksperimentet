@@ -1,6 +1,5 @@
 library("leaflet")
 library("shiny")
-library("bslib")
 
 ui <- fluidPage(
   titlePanel("Masseeksperimentet"),
