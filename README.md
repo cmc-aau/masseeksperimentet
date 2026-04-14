@@ -9,4 +9,4 @@ usethis::use_github_action(url="https://github.com/posit-dev/r-shinylive/blob/ac
 httpuv::runStaticServer("./docs", headers = c(`Access-Control-Allow-Origin` = "*"))
 ```
 
-Serving it through RStudio on BioCloud through OOD might not work, but it will locally. GitHub actions should build the site to serve it on pages.
+Serving it through RStudio on BioCloud through OOD might not work, but it will locally. GitHub actions will build the site automatically with every commit to serve it on pages, but ensure `docs/app.json` doesn't exceed 100MB before committing changes.
