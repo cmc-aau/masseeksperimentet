@@ -1,0 +1,195 @@
+---
+title: "MX"
+format: pdf
+editor: visual
+---
+
+# Masseeksperimentet
+
+```{r setup, echo = FALSE, message = FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  cache = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE,
+  fig.height =8,
+  fig.width = 8
+)
+
+library("data.table")
+library("readxl")
+library("dplyr")
+library("tidyr")
+library("tibble")
+library("ampvis2")
+library("Nonpareil")
+library("foreach")
+library("patchwork")
+
+shinyapp_dir <- "app"
+```
+
+# Metadata
+
+```{r loaddata}
+# let's make a decision about naming the sample ID column consistently everywhere!!
+sampleid_colname <- "SampleID"
+
+### sequencing metadata with libIDs etc
+seq_metadata <- fread("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/metadata/data_overeview(Ark1).csv")
+colnames(seq_metadata)[1] <- sampleid_colname
+seq_metadata[[1]] <- gsub("[^0-9]+", "", seq_metadata[[1]])
+seq_metadata <- seq_metadata[!is.na(eval(parse(text = sampleid_colname))) & !is.na(LibID) & !duplicated(LibID)]
+
+### nonpareil, merge with npo filenames, obtain numreads per fastq file, calc nonpareil "diversity"
+npofiles <- data.table(
+  npofile = list.files("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/nonpareil/output", pattern = "*.npo", recursive = TRUE, full.names = T)
+)
+npofiles[, LibID := gsub("_R[0-9]+.*$", "", tools::file_path_sans_ext(basename(npofile)))]
+getreadsfromnpofile <- function(npofile) {
+  npofile <- readLines(npofile, n = 10)
+  numreads <- as.integer(gsub("[^0-9]+", "", npofile[grepl("^# @R", npofile)]))
+  return(numreads)
+}
+npofiles[, numreads := getreadsfromnpofile(npofile), by = npofile]
+npofiles[, nonpareil_diversity := tryCatch({Nonpareil.curve(npofile, plot = FALSE)@diversity}, error = function(e) {return(NA)}), by = npofile]
+npofiles[nonpareil_diversity == 0, nonpareil_diversity := NA]
+metadata <- npofiles[seq_metadata, on = "LibID"]
+
+### original/official metadata
+metadata_off <- read_excel("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/metadata/MasterFile_MX2025_20260320.xlsx")
+setDT(metadata_off)
+colnames(metadata_off)[1] <- sampleid_colname
+metadata_off[[sampleid_colname]] <- gsub("[^0-9]+", "", metadata_off[[sampleid_colname]])
+metadata <- metadata_off[metadata, on = sampleid_colname]
+metadata <- metadata[, .SD, by = "LibID"] # move LibID column to first column
+
+# need habitat type to do any analysis
+metadata <- metadata[!is.na(HabitatType)]
+```
+
+# Abundance data
+
+```{r}
+### ABUNDANCE DATA
+# sylph output
+taxrelabund <- fread("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/MASSE160326_quant/MASSE160326_tax_relative_abundance.tsv.zip")
+colnames(taxrelabund)[colnames(taxrelabund) %in% "clade_name"] <- "OTU"
+# extract genus-level abundances, convert to ampvis2 format
+taxrelabund <- taxrelabund[grepl("g[_]+[^|]*$", OTU)]
+# for some reason there are Genus level taxa with multiple parents
+taxrelabund <- taxrelabund[!duplicated(gsub("^.*g_+", "", OTU))]
+
+# generate taxonomy table from clade_name
+tax <- separate_wider_delim(
+  taxrelabund[,1, drop = FALSE],
+  "OTU",
+  delim = "|",
+  names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus"),
+  cols_remove = FALSE
+)
+tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
+# amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
+tax[["OTU"]] <- gsub("^[dkpcofgs]_+", "", tax[["OTU"]])
+
+# extract abundance table and sample IDs from filenames
+abund <- column_to_rownames(taxrelabund, "OTU")
+rownames(abund) <- gsub("^.*g_+", "", rownames(abund))
+colnames(abund) <- gsub("_R1.fastq.gz$", "", basename(colnames(abund)))
+
+# load as ampvis2 format
+MX <- amp_load(
+  otutable = abund,
+  taxonomy = tax,
+  metadata = metadata
+)
+saveRDS(MX, "data/mx.rds")
+# write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
+fwrite(MX$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude", "allsamples")], file.path(shinyapp_dir, "MXmetadata.csv"))
+```
+
+# heatmaps per sample
+
+```{r}
+# heatmap per sample
+MX$metadata[["allsamples"]] <- "Alle prøver"
+# Sample IDs 1087 and 1514 are duplicated!
+# use a dynamic ID col, could also be SampleID or any other var
+idcol <- "LibID"
+ids <- MX$metadata[[idcol]]
+foreach(
+  id = ids,
+  .combine = c,
+  .inorder = TRUE
+) %dopar% {
+  sample_heatmap <- amp_heatmap(
+    suppressMessages(amp_filter_samples(MX, eval(parse(text = idcol)) %in% id)),
+    group_by = c("SampleID"),
+    tax_show = 20L,
+    tax_aggregate = "Genus",
+    tax_add = "Phylum",
+    normalise = FALSE
+  )
+  all_heatmap <- amp_heatmap(
+    MX,
+    group_by = "allsamples",
+    tax_show = levels(droplevels(sample_heatmap$data$Display)),
+    order_y_by = levels(droplevels(sample_heatmap$data$Display)),
+    tax_aggregate = "Genus",
+    tax_add = "Phylum",
+    normalise = FALSE
+  ) + theme(
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank()
+  )
+  plot <- sample_heatmap + all_heatmap
+  ggsave(
+    file.path(shinyapp_dir, "www", paste0(MX$metadata[MX$metadata[[idcol]] %in% id, idcol], ".png")),
+    plot = plot,
+    create.dir = TRUE,
+    height = 6,
+    width = 5,
+    dpi = 100 # reduce DPI to avoid shiny app becoming too large for github (app.json will contain EVERYTHING in one file, max file size is 100MB)
+  )
+  invisible()
+}
+
+```
+
+```{r}
+# heatmap per habitat
+amp_heatmap(
+  MX,
+  tax_aggregate = "Genus",
+  tax_show = 20,
+  group_by = "HabitatType",
+  normalise = FALSE
+)
+```
+
+```{r}
+# ordination
+ord <- amp_ordinate(
+  MX,
+  type = "nmds",
+  distmeasure = "bray",
+  sample_color_by = "HabitatType",
+  filter_species = 0,
+  plot_species = TRUE,
+  species_nlabels = 30
+)
+```
+
+```{r}
+# nonpareil
+ggplot(
+  MX$metadata,
+  aes(
+    y = nonpareil_diversity,
+    group = HabitatType,
+    color = HabitatType
+  )
+) +
+  geom_boxplot()
+```
