@@ -9,7 +9,7 @@ editor: visual
 ```{r setup, echo = FALSE, message = FALSE}
 knitr::opts_chunk$set(
   echo = FALSE,
-  cache = TRUE,
+  cache = FALSE,
   message = FALSE,
   warning = FALSE,
   error = FALSE,
