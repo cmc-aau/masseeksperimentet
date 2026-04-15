@@ -24,10 +24,18 @@ library("tidyr")
 library("tibble")
 library("ampvis2")
 library("Nonpareil")
-library("foreach")
 library("patchwork")
+library("foreach")
+library("doFuture")
 
 shinyapp_dir <- "app"
+
+# Lower this if you don't have enough memory, or set the future::plan below to sequential
+# See https://www.r-bloggers.com/2023/06/dofuture-a-better-foreach-parallelization-operator-than-dopar/
+maxthreads <- as.integer(system("nproc", intern = TRUE))
+setDTthreads(maxthreads)
+doFuture::registerDoFuture()
+plan(multisession, workers = maxthreads)
 ```
 
 # Metadata
@@ -105,24 +113,30 @@ MX <- amp_load(
   metadata = metadata
 )
 saveRDS(MX, "data/mx.rds")
-# write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
-fwrite(MX$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude", "allsamples")], file.path(shinyapp_dir, "MXmetadata.csv"))
 ```
 
 # heatmaps per sample
 
 ```{r}
-# heatmap per sample
+# heatmap per sample (parallelized)
 MX$metadata[["allsamples"]] <- "Alle prøver"
+# write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
+fwrite(MX$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude", "allsamples")], file.path(shinyapp_dir, "MXmetadata.csv"))
+
 # Sample IDs 1087 and 1514 are duplicated!
 # use a dynamic ID col, could also be SampleID or any other var
 idcol <- "LibID"
 ids <- MX$metadata[[idcol]]
 foreach(
-  id = ids,
+  id = ids[1:3],
   .combine = c,
-  .inorder = TRUE
-) %dopar% {
+  .inorder = TRUE,
+  # exporting only a bare minimum to all the forked processes reduces memory usage of each
+  .options.future = list(
+    globals = c("MX", "idcol", "shinyapp_dir"),
+    packages = c("ampvis2", "patchwork")
+  )
+) %dofuture% {
   sample_heatmap <- amp_heatmap(
     suppressMessages(amp_filter_samples(MX, eval(parse(text = idcol)) %in% id)),
     group_by = c("SampleID"),
