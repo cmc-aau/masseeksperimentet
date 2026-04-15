@@ -13,10 +13,13 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     leaflet(MXmetadata) %>%
       addTiles() %>%
-      addCircleMarkers(
+      addAwesomeMarkers(
         lng = ~PointLongitude, lat = ~PointLatitude, 
         layerId = ~LibID,
-        radius = 5, color = "blue"
+        icon = awesomeIcons(
+          library = 'ion'
+          #,markerColor = 
+        )
       )
   })
   
