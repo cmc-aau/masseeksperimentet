@@ -4,7 +4,7 @@ format: pdf
 editor: visual
 ---
 
-# Masseeksperimentet
+# Masseeksperimentet (+MFD)
 
 ```{r setup, echo = FALSE, message = FALSE}
 knitr::opts_chunk$set(
@@ -29,6 +29,7 @@ library("foreach")
 library("doFuture")
 
 shinyapp_dir <- "app"
+ampvis2_obj_out <- "data/MX/mx.rds" # delete this file to reload data
 
 # Lower this if you don't have enough memory, or set the future::plan below to sequential
 # See https://www.r-bloggers.com/2023/06/dofuture-a-better-foreach-parallelization-operator-than-dopar/
@@ -38,81 +39,93 @@ doFuture::registerDoFuture()
 plan(multisession, workers = maxthreads)
 ```
 
-# Metadata
+## Load metadata
 
 ```{r loaddata}
-# let's make a decision about naming the sample ID column consistently everywhere!!
-sampleid_colname <- "SampleID"
-
-### sequencing metadata with libIDs etc
-seq_metadata <- fread("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/metadata/data_overeview(Ark1).csv")
-colnames(seq_metadata)[1] <- sampleid_colname
-seq_metadata[[1]] <- gsub("[^0-9]+", "", seq_metadata[[1]])
-seq_metadata <- seq_metadata[!is.na(eval(parse(text = sampleid_colname))) & !is.na(LibID) & !duplicated(LibID)]
-
-### nonpareil, merge with npo filenames, obtain numreads per fastq file, calc nonpareil "diversity"
-npofiles <- data.table(
-  npofile = list.files("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/nonpareil/output", pattern = "*.npo", recursive = TRUE, full.names = T)
-)
-npofiles[, LibID := gsub("_R[0-9]+.*$", "", tools::file_path_sans_ext(basename(npofile)))]
-getreadsfromnpofile <- function(npofile) {
-  npofile <- readLines(npofile, n = 10)
-  numreads <- as.integer(gsub("[^0-9]+", "", npofile[grepl("^# @R", npofile)]))
-  return(numreads)
+if(!file.exists(ampvis2_obj_out)) {
+  # let's make a decision about naming the sample ID column consistently everywhere!!
+  sampleid_colname <- "SampleID"
+  
+  ### sequencing metadata with libIDs etc
+  seq_metadata <- fread("data/MX/metadata/data_overeview(Ark1).csv")
+  colnames(seq_metadata)[1] <- sampleid_colname
+  seq_metadata[[1]] <- gsub("[^0-9]+", "", seq_metadata[[1]])
+  seq_metadata <- seq_metadata[!is.na(eval(parse(text = sampleid_colname))) & !is.na(LibID) & !duplicated(LibID)]
+  
+  ### nonpareil, merge with npo filenames, obtain numreads per fastq file, calc nonpareil "diversity"
+  npofiles <- data.table(
+    npofile = list.files("data/MX/nonpareil/output", pattern = "*.npo", recursive = TRUE, full.names = T)
+  )
+  npofiles[, LibID := gsub("_R[0-9]+.*$", "", tools::file_path_sans_ext(basename(npofile)))]
+  getreadsfromnpofile <- function(npofile) {
+    npofile <- readLines(npofile, n = 10)
+    numreads <- as.integer(gsub("[^0-9]+", "", npofile[grepl("^# @R", npofile)]))
+    return(numreads)
+  }
+  npofiles[, numreads := getreadsfromnpofile(npofile), by = npofile]
+  npofiles[, nonpareil_diversity := tryCatch({Nonpareil.curve(npofile, plot = FALSE)@diversity}, error = function(e) {return(NA)}), by = npofile]
+  npofiles[nonpareil_diversity == 0, nonpareil_diversity := NA]
+  metadata <- npofiles[seq_metadata, on = "LibID"]
+  
+  ### original/official metadata
+  metadata_off <- read_excel("data/MX/metadata/MasterFile_MX2025_20260320.xlsx")
+  setDT(metadata_off)
+  colnames(metadata_off)[1] <- sampleid_colname
+  metadata_off[[sampleid_colname]] <- gsub("[^0-9]+", "", metadata_off[[sampleid_colname]])
+  metadata <- metadata_off[metadata, on = sampleid_colname]
+  metadata <- metadata[, .SD, by = "LibID"] # move LibID column to first column
+  
+  # need habitat type to do any analysis
+  metadata <- metadata[!is.na(HabitatType)]
 }
-npofiles[, numreads := getreadsfromnpofile(npofile), by = npofile]
-npofiles[, nonpareil_diversity := tryCatch({Nonpareil.curve(npofile, plot = FALSE)@diversity}, error = function(e) {return(NA)}), by = npofile]
-npofiles[nonpareil_diversity == 0, nonpareil_diversity := NA]
-metadata <- npofiles[seq_metadata, on = "LibID"]
-
-### original/official metadata
-metadata_off <- read_excel("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/metadata/MasterFile_MX2025_20260320.xlsx")
-setDT(metadata_off)
-colnames(metadata_off)[1] <- sampleid_colname
-metadata_off[[sampleid_colname]] <- gsub("[^0-9]+", "", metadata_off[[sampleid_colname]])
-metadata <- metadata_off[metadata, on = sampleid_colname]
-metadata <- metadata[, .SD, by = "LibID"] # move LibID column to first column
-
-# need habitat type to do any analysis
-metadata <- metadata[!is.na(HabitatType)]
 ```
 
-# Abundance data
+## Load abundance data
 
 ```{r}
-### ABUNDANCE DATA
-# sylph output
-taxrelabund <- fread("/home/bio.aau.dk/ksa/projects/Masseeksperimentet/data/MASSE160326_quant/MASSE160326_tax_relative_abundance.tsv.zip")
-colnames(taxrelabund)[colnames(taxrelabund) %in% "clade_name"] <- "OTU"
-# extract genus-level abundances, convert to ampvis2 format
-taxrelabund <- taxrelabund[grepl("g[_]+[^|]*$", OTU)]
-# for some reason there are Genus level taxa with multiple parents
-taxrelabund <- taxrelabund[!duplicated(gsub("^.*g_+", "", OTU))]
+if(!file.exists(ampvis2_obj_out)) {
+  ### ABUNDANCE DATA
+  # sylph output
+  taxrelabund <- fread("data/MX/MASSE160326_quant/MASSE160326_tax_relative_abundance.tsv.zip")
+  colnames(taxrelabund)[colnames(taxrelabund) %in% "clade_name"] <- "OTU"
+  taxrelabund <- taxrelabund[grepl("g[_]+[^|]+$", OTU)]
+  # for some reason there are Genus level taxa with multiple parents
+  taxrelabund <- taxrelabund[!duplicated(gsub("^.*g_+", "", OTU))]
+  
+  # generate taxonomy table from clade_name
+  tax <- separate_wider_delim(
+    taxrelabund[,1, drop = FALSE],
+    "OTU",
+    delim = "|",
+    names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus"),
+    cols_remove = FALSE
+  )
+  tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
+  # amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
+  tax[["OTU"]] <- gsub("[dkpcofgst]_+", "", tax[["OTU"]])
+  
+  # extract abundance table and sample IDs from filenames
+  abund <- column_to_rownames(taxrelabund, "OTU")
+  rownames(abund) <- gsub("^.*g_+", "", rownames(abund))
+  colnames(abund) <- gsub("_R1.fastq.gz$", "", basename(colnames(abund)))
+  
+  # load as ampvis2 format
+  MX <- amp_load(
+    otutable = abund,
+    taxonomy = tax,
+    metadata = metadata
+  )
+  saveRDS(MX, ampvis2_obj_out)
+}
 
-# generate taxonomy table from clade_name
-tax <- separate_wider_delim(
-  taxrelabund[,1, drop = FALSE],
-  "OTU",
-  delim = "|",
-  names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus"),
-  cols_remove = FALSE
-)
-tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
-# amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
-tax[["OTU"]] <- gsub("^[dkpcofgs]_+", "", tax[["OTU"]])
+```
 
-# extract abundance table and sample IDs from filenames
-abund <- column_to_rownames(taxrelabund, "OTU")
-rownames(abund) <- gsub("^.*g_+", "", rownames(abund))
-colnames(abund) <- gsub("_R1.fastq.gz$", "", basename(colnames(abund)))
+## Load ampvis2 object
 
-# load as ampvis2 format
-MX <- amp_load(
-  otutable = abund,
-  taxonomy = tax,
-  metadata = metadata
-)
-saveRDS(MX, "data/mx.rds")
+```{r}
+if(!exists("MX", envir = .GlobalEnv)) {
+  MX <- readRDS("data/MX/mx.rds")
+}
 ```
 
 # heatmaps per sample
