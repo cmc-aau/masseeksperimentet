@@ -26,12 +26,14 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      RENV_PATHS_ROOT: ~/.cache/R/renv
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: rstudio/shiny-workflows/setup-r-package@v1
         with:
+          cache: false
           packages: |
             renv
             posit-dev/r-shinylive
