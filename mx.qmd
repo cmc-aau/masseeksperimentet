@@ -30,6 +30,7 @@ library("doFuture")
 
 shinyapp_dir <- "app"
 ampvis2_obj_out <- "data/MX/mx.rds" # delete this file to reload data
+#unlink(ampvis2_obj_out)
 
 # Lower this if you don't have enough memory, or set the future::plan below to sequential
 # See https://www.r-bloggers.com/2023/06/dofuture-a-better-foreach-parallelization-operator-than-dopar/
@@ -88,13 +89,16 @@ if(!file.exists(ampvis2_obj_out)) {
   # sylph output
   taxrelabund <- fread("data/MX/MASSE160326_quant/MASSE160326_tax_relative_abundance.tsv.zip")
   colnames(taxrelabund)[colnames(taxrelabund) %in% "clade_name"] <- "OTU"
-  taxrelabund <- taxrelabund[grepl("g[_]+[^|]+$", OTU)]
-  # for some reason there are Genus level taxa with multiple parents
-  taxrelabund <- taxrelabund[!duplicated(gsub("^.*g_+", "", OTU))]
+  taxrelabund_genus <- taxrelabund[grepl("g[_]+[^|]+$", OTU)]
   
+  # for some reason there are taxa with multiple parents
+  Genera <- gsub(".*g__", "", taxrelabund_genus[["OTU"]])
+  polyphyletics <-  taxrelabund_genus[["OTU"]][duplicated(Genera) | duplicated(Genera, fromLast = TRUE)]
+  taxrelabund_genus <- taxrelabund_genus[!taxrelabund_genus[["OTU"]] %chin% polyphyletics]
+
   # generate taxonomy table from clade_name
   tax <- separate_wider_delim(
-    taxrelabund[,1, drop = FALSE],
+    taxrelabund_genus[,1, drop = FALSE],
     "OTU",
     delim = "|",
     names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus"),
@@ -102,11 +106,11 @@ if(!file.exists(ampvis2_obj_out)) {
   )
   tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
   # amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
-  tax[["OTU"]] <- gsub("[dkpcofgst]_+", "", tax[["OTU"]])
+  tax[["OTU"]] <- gsub("^[dkpcofgst]__", "", tax[["OTU"]])
   
   # extract abundance table and sample IDs from filenames
-  abund <- column_to_rownames(taxrelabund, "OTU")
-  rownames(abund) <- gsub("^.*g_+", "", rownames(abund))
+  abund <- taxrelabund_genus
+  abund[["OTU"]] <- gsub(".*[dkpcofgst]__", "", abund[["OTU"]])
   colnames(abund) <- gsub("_R1.fastq.gz$", "", basename(colnames(abund)))
   
   # load as ampvis2 format
@@ -140,7 +144,7 @@ fwrite(MX$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude", "
 # use a dynamic ID col, could also be SampleID or any other var
 idcol <- "LibID"
 ids <- MX$metadata[[idcol]]
-foreach(
+heatmaps <- foreach(
   id = ids[1:3],
   .combine = c,
   .inorder = TRUE,
@@ -179,7 +183,7 @@ foreach(
     width = 5,
     dpi = 100 # reduce DPI to avoid shiny app becoming too large for github (app.json will contain EVERYTHING in one file, max file size is 100MB)
   )
-  invisible()
+  invisible(plot)
 }
 
 ```
@@ -197,7 +201,7 @@ amp_heatmap(
 
 ```{r}
 # ordination
-ord <- amp_ordinate(
+amp_ordinate(
   MX,
   type = "nmds",
   distmeasure = "bray",

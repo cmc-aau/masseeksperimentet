@@ -10,3 +10,4 @@
 *.npc
 *.npl
 data/**/*.tsv
+.Rprofile
