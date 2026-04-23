@@ -13,9 +13,15 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE,
   error = FALSE,
-  fig.height =8,
+  fig.height = 8,
   fig.width = 8
 )
+
+# use renv from the lock file
+if (!require("renv")) {
+  install.packages("renv")
+}
+renv::load()
 
 library("data.table")
 library("tidyr")
@@ -24,7 +30,7 @@ library("readxl")
 library("ampvis2")
 
 ampvis2_obj_out <- "data/MFD/mfd.rds" # delete this file to reload data
-#unlink(ampvis2_obj_out)
+# unlink(ampvis2_obj_out)
 
 maxthreads <- as.integer(system("nproc", intern = TRUE))
 setDTthreads(maxthreads)
@@ -34,7 +40,7 @@ setDTthreads(maxthreads)
 
 ```{r}
 metadata_filepath <- "data/MFD/metadata.xlsx" # delete file to update
-if(!file.exists(metadata_filepath)) {
+if (!file.exists(metadata_filepath)) {
   download.file(
     "https://github.com/cmc-aau/mfd_metadata/raw/refs/heads/main/analysis/releases/latest_mfd_db.xlsx",
     destfile = metadata_filepath,
@@ -47,7 +53,7 @@ metadata <- read_xlsx(metadata_filepath)
 ## Load abundance data
 
 ```{r}
-if(!file.exists(ampvis2_obj_out)) {
+if (!file.exists(ampvis2_obj_out)) {
   ### ABUNDANCE DATA
   # sylph output
   taxrelabund <- fread(
@@ -62,9 +68,9 @@ if(!file.exists(ampvis2_obj_out)) {
   ]
   # for some reason there are taxa with multiple parents
   Genera <- gsub(".*g__", "", colnames(taxrelabund_genus))
-  polyphyletics <-  colnames(taxrelabund_genus)[duplicated(Genera) | duplicated(Genera, fromLast = TRUE)]
-  taxrelabund_genus <- taxrelabund_genus[,!colnames(taxrelabund_genus) %chin% polyphyletics, with = FALSE]
-  
+  polyphyletics <- colnames(taxrelabund_genus)[duplicated(Genera) | duplicated(Genera, fromLast = TRUE)]
+  taxrelabund_genus <- taxrelabund_genus[, !colnames(taxrelabund_genus) %chin% polyphyletics, with = FALSE]
+
   # generate taxonomy table from "OTU" (=Genus) names
   tax <- separate_wider_delim(
     data.table(OTU = colnames(taxrelabund_genus)[-1]),
@@ -77,19 +83,19 @@ if(!file.exists(ampvis2_obj_out)) {
   tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
   # amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
   tax[["OTU"]] <- gsub("^[dkpcofgst]__", "", tax[["OTU"]])
-  
+
   # cast abundance table
   taxrelabund_genus %>%
     melt(
       id.vars = sampleid_col,
       variable.name = "OTU"
-    ) %>% 
-    dcast(OTU ~ eval(parse(text = sampleid_col))) %>% 
+    ) %>%
+    dcast(OTU ~ eval(parse(text = sampleid_col))) %>%
     {
       .[["OTU"]] <- gsub(".*g__", "", .[["OTU"]])
       .
     } -> abund
-  
+
   MFD <- amp_load(
     otutable = abund,
     taxonomy = tax,
