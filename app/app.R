@@ -9,29 +9,25 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   MXmetadata <- read.csv("MXmetadata.csv")
   
-  # Render the initial map
   output$map <- renderLeaflet({
     leaflet(MXmetadata) %>%
       addTiles() %>%
       addAwesomeMarkers(
         lng = ~PointLongitude, lat = ~PointLatitude, 
         layerId = ~LibID,
-        icon = awesomeIcons(
-          library = 'ion'
-          #,markerColor = 
-        )
+        icon = awesomeIcons(library = 'ion', markerColor = 'blue')
       )
   })
   
   observeEvent(input$map_marker_click, {
     click <- input$map_marker_click
-    LibID <- click$id
+    selected_id <- click$id
     
-    # Show a modal with the pregenerated heatmap PNG
+    sample_info <- MXmetadata[MXmetadata$LibID == selected_id, ]
+    
     showModal(modalDialog(
-      title = paste("Sample:", LibID),
-      # Shinylive looks in 'www' for 'src'
-      img(src = file.path(paste0(LibID, ".png")), width = "100%"),
+      title = paste("Prøve ID:", selected_id, "-", MXmetadata[MXmetadata$LibID == selected_id, "SampleID"]),
+      img(src = paste0(selected_id, ".png"), width = "100%"),
       easyClose = TRUE,
       footer = modalButton("Close")
     ))
