@@ -33,10 +33,15 @@ library("Nonpareil")
 library("patchwork")
 library("foreach")
 library("doFuture")
+library("tidyverse")
 
 shinyapp_dir <- "app"
-ampvis2_obj_out <- "data/MX/mx.rds" # delete this file to reload data
-# unlink(ampvis2_obj_out)
+# dir for plots for the app (relative to this file, NOT the app dir)
+shinyapp_plots_dir <- "plots"
+# delete these files to regenerate data
+# fx: unlink(MX_ampvis2_obj_out)
+MX_ampvis2_obj_out <- "data/MX/mx.rds"
+MFD_ampvis2_obj_out <- "data/MFD/mfd.rds"
 
 # Lower this if you don't have enough memory, or set the future::plan below to sequential
 # See https://www.r-bloggers.com/2023/06/dofuture-a-better-foreach-parallelization-operator-than-dopar/
@@ -46,10 +51,10 @@ doFuture::registerDoFuture()
 plan(multisession, workers = maxthreads)
 ```
 
-## Load metadata
+## MX metadata
 
 ```{r loaddata}
-if (!file.exists(ampvis2_obj_out)) {
+if (!file.exists(MX_ampvis2_obj_out)) {
   # let's make a decision about naming the sample ID column consistently everywhere!!
   sampleid_colname <- "SampleID"
 
@@ -94,10 +99,10 @@ if (!file.exists(ampvis2_obj_out)) {
 }
 ```
 
-## Load abundance data
+## MX abundance data
 
 ```{r}
-if (!file.exists(ampvis2_obj_out)) {
+if (!file.exists(MX_ampvis2_obj_out)) {
   ### ABUNDANCE DATA
   # sylph output
   taxrelabund <- fread("data/MX/MASSE160326_quant/MASSE160326_tax_relative_abundance.tsv.zip")
@@ -132,72 +137,346 @@ if (!file.exists(ampvis2_obj_out)) {
     taxonomy = tax,
     metadata = metadata
   )
-  saveRDS(MX, ampvis2_obj_out)
+  saveRDS(MX, MX_ampvis2_obj_out)
 }
 ```
 
-## Load ampvis2 object
+## MFD metadata
+
+```{r}
+metadata_filepath <- "data/MFD/metadata.xlsx" # delete file to update
+if (!file.exists(metadata_filepath)) {
+  download.file(
+    "https://github.com/cmc-aau/mfd_metadata/raw/refs/heads/main/analysis/releases/latest_mfd_db.xlsx",
+    destfile = metadata_filepath,
+    mode = "wb"
+  )
+}
+metadata <- read_xlsx(metadata_filepath)
+```
+
+## MFD abundance data
+
+```{r}
+if (!file.exists(MFD_ampvis2_obj_out)) {
+  ### ABUNDANCE DATA
+  # sylph output
+  taxrelabund <- fread(
+    "data/MFD/MFD_GTDB_R226_quant/formatted/MFD_GTDB_R226_tax_relative_abundance_data.tsv.zip"
+  )
+  sampleid_col <- colnames(taxrelabund)[1]
+  # extract genus-level abundances and tax
+  taxrelabund_genus <- taxrelabund[
+    ,
+    c(1, grep("g[_]+[^|]+$", colnames(taxrelabund))),
+    with = FALSE
+  ]
+  # for some reason there are taxa with multiple parents
+  Genera <- gsub(".*g__", "", colnames(taxrelabund_genus))
+  polyphyletics <- colnames(taxrelabund_genus)[duplicated(Genera) | duplicated(Genera, fromLast = TRUE)]
+  taxrelabund_genus <- taxrelabund_genus[, !colnames(taxrelabund_genus) %chin% polyphyletics, with = FALSE]
+
+  # generate taxonomy table from "OTU" (=Genus) names
+  tax <- separate_wider_delim(
+    data.table(OTU = colnames(taxrelabund_genus)[-1]),
+    "OTU",
+    delim = "|",
+    names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus"),
+    cols_remove = FALSE
+  )
+  # use Genus as OTU ID's, not the full lineage
+  tax[["Species"]] <- tax[["Genus"]] -> tax[["OTU"]]
+  # amp_rename also removes g__ prefixes from OTU col (it should NOT, TODO!) which causes trouble
+  tax[["OTU"]] <- gsub("^[dkpcofgst]__", "", tax[["OTU"]])
+
+  # cast abundance table
+  taxrelabund_genus %>%
+    melt(
+      id.vars = sampleid_col,
+      variable.name = "OTU"
+    ) %>%
+    dcast(OTU ~ eval(parse(text = sampleid_col))) %>%
+    {
+      .[["OTU"]] <- gsub(".*g__", "", .[["OTU"]])
+      .
+    } -> abund
+
+  MFD <- amp_load(
+    otutable = abund,
+    taxonomy = tax,
+    metadata = metadata
+  )
+  saveRDS(MFD, MFD_ampvis2_obj_out)
+}
+```
+
+## Load ampvis2 objects
 
 ```{r}
 if (!exists("MX", envir = .GlobalEnv)) {
-  MX <- readRDS("data/MX/mx.rds")
+  MX <- readRDS(MX_ampvis2_obj_out)
+}
+if (!exists("MFD", envir = .GlobalEnv)) {
+  MFD <- readRDS(MFD_ampvis2_obj_out)
 }
 ```
 
-# heatmaps per sample
+# From Mads
+
+## Filter samples
+
+First we only take 1 sample pr. 1km2 and also prioritize the 10km2 representative samples.
 
 ```{r}
-# heatmap per sample (parallelized)
-MX$metadata[["allsamples"]] <- "Alle prøver"
+cell1km <- MFD$metadata %>%
+  group_by(mfd_sampletype, mfd_hab1, mfd_hab2, mfd_hab3, cell.1km) %>%
+  arrange(desc(cell.10km_representative)) %>%
+  mutate(count = n()) %>%
+  filter(count == 1)
+```
+
+Then we subset to relevant samples and remove strange samples.
+
+```{r}
+mfdf <- amp_filter_samples(
+  data = MFD, after_total_reads > 10000000, after_total_reads < 100000000,
+  fieldsample_barcode %in% cell1km$fieldsample_barcode,
+  mfd_areatype != "Subterranean",
+  !(mfd_hab1 %in% c(
+    "Biogas", "Drinking water", "Landfill", "Roadside",
+    "Rocky habitats and caves", NA, "Saltwater",
+    "Wastewater", "Freshwater", "Coastal", "Dunes",
+    "Bogs, mires and fens"
+  )),
+  !(mfd_hab2 %in% c(
+    NA, "Mire (non-habitat type)", "Asparagales",
+    "Superasterids", "Other", "Influent", "Asterids",
+    "Fabids", "Flowing saltwater", "Forest (non-habitattype)",
+    "Natural grasslands", "Inland dunes",
+    "Wet thicket  (non-habitat type)", "Fallow", "Malvids",
+    "Mixed crops", "Scrub"
+  )),
+  !(mfd_hab3 %in% c(
+    "Beech forests Acidophilous with Ilex",
+    "Beech forests Limestone",
+    "Natural meadow (6410 subtype)",
+    "Oak-hornbeam forests Galio-Carpinetum", "Bog woodland",
+    "Wheat, Winter, Green Grain", "Barley, Spring,
+                                             Green grain", "Maize", ""
+  )),
+  !(is.na(mfd_hab3) & mfd_hab1 == "Forests"),
+  !(is.na(mfd_hab3) & mfd_hab2 == "Poales, Cereal"),
+  !(is.na(mfd_hab3) & mfd_hab2 == "Poales, grass"),
+  !(is.na(mfd_hab3) & mfd_hab1 == "Grassland formations"),
+  !(fieldsample_barcode %in% c(
+    "MFD04182", "MFD00149", "MFD04817", "MFD05018",
+    "MFD00357", "MFD05367", "MFD06769", "MFD05703",
+    "MFD00282", "MFD00415", "MFD02404"
+  ))
+)
+```
+
+We rename the mfd2 catagories to something the students might understand.
+
+```{r}
+namechange <- mfdf$metadata %>%
+  mutate(
+    mfd_hab2 = ifelse(mfd_hab3 != "Alluvial woodland" & mfd_hab2 == "Temperate forests",
+      "Blandet skov", mfd_hab2
+    ),
+    mfd_hab2 = ifelse(mfd_hab3 == "Alluvial woodland" & mfd_hab2 == "Temperate forests",
+      "Skove ved vandløb og søer", mfd_hab2
+    ),
+    mfd_hab2 = ifelse(mfd_hab2 == "Poales, Cereal", "Kornmarker", mfd_hab2),
+    mfd_hab2 = ifelse(mfd_hab2 == "Poales, grass", "Græsmarker", mfd_hab2),
+    mfd_hab2 = ifelse(mfd_hab2 == "Parks", "Parker", mfd_hab2),
+    mfd_hab2 = ifelse(mfd_hab2 == "Temperate heath", "Tør hede", mfd_hab2),
+    mfd_hab2 = ifelse(mfd_hab2 == "Semi-natural dry grasslands", "Kalk- og sure overdrev", mfd_hab2),
+    mfd_hab2 = ifelse(mfd_hab2 == "Semi-natural tall-herb humid meadows", "Bevoksning langs vandløb", mfd_hab2)
+  )
+
+mfdf$metadata <- namechange
+```
+
+We check the number of samples in each category.
+
+```{r}
+mfdf$metadata %>%
+  group_by(mfd_hab1, mfd_hab2) %>%
+  count() %>%
+  print(n = 200)
+```
+
+## Load mx data
+
+```{r}
+mxf <- amp_filter_samples(data = MX, Reseq != "x", HabitatType != "kyst", !is.na(Region))
+```
+
+## Merge
+
+```{r}
+mm <- amp_merge_ampvis2(mxf, mfdf, by_refseq = FALSE)
+```
+
+## Filter species
+
+```{r, eval= F}
+species <- mm$abund %>%
+  mutate(genus = rownames(mm$abund)) %>%
+  pivot_longer(cols = 1:(ncol(mm$abund) - 1)) %>%
+  filter(value > 0.01) %>%
+  group_by(genus) %>%
+  summarise(
+    median = median(value),
+    mean = mean(value),
+    max = max(value),
+    count = n()
+  ) %>%
+  arrange(desc(count)) %>%
+  filter(count > 20) %>%
+  filter(max > 0.1)
+
+mms <- amp_filter_taxa(mm, tax_vector = species$genus)
+```
+
+## Add metadata
+
+```{r}
+mms2 <- mms
+mms2$metadata <- mms$metadata %>%
+  mutate(
+    kategori = ifelse(is.na(HabitatType), mfd_hab2, "Masse eksperimentet"),
+    mxdata = ifelse(is.na(HabitatType), "MicroFlora Danica", "MX"),
+    katskole = ifelse(is.na(HabitatType), mfd_hab2, LibID)
+  )
+```
+
+## Heatmap - overordnet
+
+```{r}
+amp_heatmap(mms2,
+  tax_aggregate = c("Phylum", "Genus"),
+  tax_show = 25,
+  group_by = "kategori",
+  facet_by = "mxdata",
+  plot_colorscale = "sqrt",
+  plot_values = T,
+  plot_values_size = 1.5,
+  normalise = FALSE
+) +
+  theme(
+    axis.text.x = element_text(size = 7),
+    axis.text.y = element_text(size = 7),
+    strip.text.x = element_text(size = 8),
+    legend.position = "none"
+  )
+
+# ggsave(filename = "heatmap.png", width = 14, height = 14, units = "cm", dpi = 300)
+```
+
+# Generate plots per sample for shiny app
+
+```{r}
+# plot per sample (parallelized)
 # write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
-fwrite(MX$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude", "allsamples")], file.path(shinyapp_dir, "MXmetadata.csv"))
+fwrite(mms2$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude")], file.path(shinyapp_dir, "metadata.csv"))
+
+# master ordination on which to add/highlight individual sample points
+p_ord_master <- amp_ordinate(
+  mms2,
+  sample_color_by = "kategori",
+  filter_species = 0,
+  transform = "sqrt",
+  constrain = "kategori",
+  type = "RDA"
+)
+p_ord_master$layers[[1]] <- NULL
 
 # Sample IDs 1087 and 1514 are duplicated!
 # use a dynamic ID col, could also be SampleID or any other var
 idcol <- "LibID"
-ids <- MX$metadata[[idcol]]
+ids <- mms2$metadata[mms2$metadata$mxdata == "MX", idcol]
 heatmaps <- foreach(
-  id = ids[1:3],
+  id = ids, # just subset here for developing
   .combine = c,
   .inorder = TRUE,
-  # exporting only a bare minimum to all the forked processes reduces memory usage of each
+  # export only a bare minimum of objects and pkgs to all the forked processes to minimize memory usage
   .options.future = list(
-    globals = c("MX", "idcol", "shinyapp_dir"),
-    packages = c("ampvis2", "patchwork")
+    globals = c("mms2", "idcol", "shinyapp_dir", "shinyapp_plots_dir", "p_ord_master"),
+    packages = c("ampvis2", "patchwork", "RColorBrewer")
   )
 ) %dofuture% {
-  sample_heatmap <- amp_heatmap(
-    suppressMessages(amp_filter_samples(MX, eval(parse(text = idcol)) %in% id)),
-    group_by = c("SampleID"),
-    tax_show = 20L,
-    tax_aggregate = "Genus",
-    tax_add = "Phylum",
+  d <- suppressMessages(amp_filter_samples(mms2, mxdata == "MicroFlora Danica" | eval(parse(text = idcol)) == id))
+
+  p_heatmap <- amp_heatmap(
+    d,
+    tax_aggregate = c("Phylum", "Genus"),
+    tax_show = 25,
+    group_by = "katskole",
+    facet_by = "mxdata",
+    plot_colorscale = "sqrt",
+    plot_values = T,
+    plot_values_size = 3,
     normalise = FALSE
+  ) +
+    theme(
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7),
+      strip.text.x = element_text(size = 8),
+      legend.position = "none"
+    )
+
+  p_ord_sample <- p_ord_master +
+    stat_ellipse(
+      data = p_ord_master$data %>% subset(mxdata == "MicroFlora Danica"),
+      level = 0.5,
+      size = 1,
+      geom = "polygon",
+      aes(
+        fill = kategori,
+        color = kategori
+      ),
+      alpha = 0.7
+    ) +
+    geom_point(
+      data = p_ord_master$data %>% subset(mxdata == "MX"),
+      aes(shape = HabitatType), color = "black", alpha = 0.2, size = 3
+    ) +
+    scale_color_manual(values = brewer.pal(9, "Set1"), name = "MicroFlora Danica") +
+    scale_fill_manual(values = brewer.pal(9, "Set1"), name = "MicroFlora Danica") +
+    scale_shape_manual(name = "Masse Eksperimentet", values = c(16, 17, 15, 18)) +
+    geom_point(
+      data = p_ord_master$data %>% subset(eval(parse(text = idcol)) == id),
+      aes(shape = HabitatType), size = 4, color = "red", alpha = 1
+    ) +
+    theme(
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 10)
   )
-  all_heatmap <- amp_heatmap(
-    MX,
-    group_by = "allsamples",
-    tax_show = levels(droplevels(sample_heatmap$data$Display)),
-    order_y_by = levels(droplevels(sample_heatmap$data$Display)),
-    tax_aggregate = "Genus",
-    tax_add = "Phylum",
-    normalise = FALSE
-  ) + theme(
-    axis.ticks.y = element_blank(),
-    axis.text.y = element_blank()
-  )
-  plot <- sample_heatmap + all_heatmap
+  
   ggsave(
-    file.path(shinyapp_dir, "www", paste0(MX$metadata[MX$metadata[[idcol]] %in% id, idcol], ".png")),
-    plot = plot,
+    file.path(shinyapp_plots_dir, paste0(mms2$metadata[mms2$metadata[[idcol]] %in% id, idcol], "_heatmap.png")),
+    plot = p_heatmap,
     create.dir = TRUE,
-    height = 6,
+    height = 5,
     width = 5,
-    dpi = 100 # reduce DPI to avoid shiny app becoming too large for github (app.json will contain EVERYTHING in one file, max file size is 100MB)
+    dpi = 200
+  )
+
+  ggsave(
+    file.path(shinyapp_plots_dir, paste0(mms2$metadata[mms2$metadata[[idcol]] %in% id, idcol], "_ordination.png")),
+    plot = p_ord_sample,
+    create.dir = TRUE,
+    height = 5,
+    width = 5,
+    dpi = 200
   )
   invisible(plot)
 }
 ```
+
+# Misc
 
 ```{r}
 # heatmap per habitat
