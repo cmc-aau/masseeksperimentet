@@ -4,6 +4,7 @@ Code for community data analysis and shiny app.
 ## Shiny app
 Export static app using [shinylive](https://posit-dev.github.io/r-shinylive/):
 ```
+# You may have to delete the `docs` after making changes before running `shinylive::export()`
 shinylive::export(appdir = "app", destdir = "docs")
 usethis::use_github_action(url="https://github.com/posit-dev/r-shinylive/blob/actions-v1/examples/deploy-app.yaml")
 httpuv::runStaticServer("./docs", headers = c(`Access-Control-Allow-Origin` = "*"))
