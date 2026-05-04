@@ -7,7 +7,7 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  MXmetadata <- read.csv("MXmetadata.csv")
+  MXmetadata <- read.csv("metadata.csv")
 
   output$map <- renderLeaflet({
     leaflet(MXmetadata) %>%
@@ -27,7 +27,8 @@ server <- function(input, output, session) {
 
     showModal(modalDialog(
       title = paste("Prøve ID:", selected_id, "-", MXmetadata[MXmetadata$LibID == selected_id, "SampleID"]),
-      img(src = paste0(selected_id, ".png"), width = "100%"),
+      # load images directly from GitHub instead of bundling them into the app JSON file because of the 100MB file limit on GitHub
+      img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, ".png"), width = "100%"),
       easyClose = TRUE,
       footer = modalButton("Close")
     ))
