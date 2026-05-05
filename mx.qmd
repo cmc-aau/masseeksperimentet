@@ -422,6 +422,12 @@ heatmaps <- foreach(
     plot_colorscale = "sqrt",
     plot_values_size = 3,
     normalise = FALSE
+  ) +
+  theme(
+    axis.text.x = element_text(size = 7),
+    axis.text.y = element_text(size = 8),
+    strip.text.x = element_text(size = 8),
+    legend.position = "none"
   )
   # heatmap, MX+MFD subset to sample taxa
   p_heatmap_master_subset <- amp_heatmap(
@@ -437,7 +443,10 @@ heatmaps <- foreach(
   ) +
     theme(
       axis.text.y = element_blank(),
-      axis.ticks.y = element_blank()
+      axis.ticks.y = element_blank(),
+      axis.text.x = element_text(size = 8),
+      strip.text.x = element_text(size = 8),
+      legend.position = "none"
     )
   p_heatmap <- p_heatmap_sample +
     p_heatmap_master_subset +

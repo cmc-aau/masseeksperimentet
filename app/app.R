@@ -25,19 +25,22 @@ server <- function(input, output, session) {
 
     sample_info <- MXmetadata[MXmetadata$LibID == selected_id, ]
 
-    showModal(modalDialog(
-      title = paste("Prøve ID:", selected_id, "-", MXmetadata[MXmetadata$LibID == selected_id, "SampleID"]),
-      # load images directly from GitHub instead of bundling them into the app JSON file because of the 100MB file limit on GitHub
-      h2("Mest hyppige bakterier"),
-      helpText("Top 25 mest hyppige bakterier i jeres prøve sammenlignet med alle prøver i MicroFlora Danica projektet"),
-      img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_heatmap.png"), width = "100%"),
-      hr(),
-      h2("Sammenligning med alle andre prøver"),
-      helpText("\"Redundancy Analysis (RDA)\" af alle prøver i Masseeksperimentet og MicroFlora Danica projektet, med jeres prøve fremhævet (rød). Afstanden mellem punkterne repræsenterer forskellene imellem alle bakterier i prøverne."),
-      img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_ordination.png"), width = "100%"),
-      easyClose = TRUE,
-      footer = modalButton("Close")
-    ))
+    showModal(
+      modalDialog(
+        title = paste("Prøve ID:", selected_id, "-", MXmetadata[MXmetadata$LibID == selected_id, "SampleID"]),
+        # load images directly from GitHub instead of bundling them into the app JSON file because of the 100MB file limit on GitHub
+        h2("Mest hyppige bakterier"),
+        helpText("Top 25 mest hyppige bakterier i jeres prøve sammenlignet med alle prøver i MicroFlora Danica projektet"),
+        img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_heatmap.png"), width = "100%"),
+        hr(),
+        h2("Sammenligning med alle andre prøver"),
+        helpText("\"Redundancy Analysis (RDA)\" af alle prøver i Masseeksperimentet og MicroFlora Danica projektet, med jeres prøve fremhævet (rød). Afstanden mellem punkterne repræsenterer forskellene imellem alle bakterier i prøverne."),
+        img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_ordination.png"), width = "100%"),
+        easyClose = TRUE,
+        footer = modalButton("Close"),
+        size = "xl"
+      )
+    )
   })
 }
 
