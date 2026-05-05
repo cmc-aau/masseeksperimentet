@@ -34,6 +34,7 @@ library("patchwork")
 library("foreach")
 library("doFuture")
 library("tidyverse")
+library("RColorBrewer")
 
 shinyapp_dir <- "app"
 # dir for plots for the app (relative to this file, NOT the app dir)
@@ -321,7 +322,7 @@ mm <- amp_merge_ampvis2(mxf, mfdf, by_refseq = FALSE)
 
 ## Filter species
 
-```{r, eval= F}
+```{r}
 species <- mm$abund %>%
   mutate(genus = rownames(mm$abund)) %>%
   pivot_longer(cols = 1:(ncol(mm$abund) - 1)) %>%
@@ -350,19 +351,21 @@ mms2$metadata <- mms$metadata %>%
     mxdata = ifelse(is.na(HabitatType), "MicroFlora Danica", "MX"),
     katskole = ifelse(is.na(HabitatType), mfd_hab2, LibID)
   )
+
+# write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
+fwrite(mms2$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude")], file.path(shinyapp_dir, "metadata.csv"))
 ```
 
 ## Heatmap - overordnet
 
 ```{r}
-amp_heatmap(mms2,
+p_heatmap_master <- amp_heatmap(mms2,
   tax_aggregate = c("Phylum", "Genus"),
   tax_show = 25,
   group_by = "kategori",
   facet_by = "mxdata",
   plot_colorscale = "sqrt",
-  plot_values = T,
-  plot_values_size = 1.5,
+  plot_values_size = 3,
   normalise = FALSE
 ) +
   theme(
@@ -375,13 +378,9 @@ amp_heatmap(mms2,
 # ggsave(filename = "heatmap.png", width = 14, height = 14, units = "cm", dpi = 300)
 ```
 
-# Generate plots per sample for shiny app
+# Ordinering - overordnet
 
 ```{r}
-# plot per sample (parallelized)
-# write out metadata for shiny app, reduce to an absolute minimum to reduce app.json size
-fwrite(mms2$metadata[, c("LibID", "SampleID", "PointLongitude", "PointLatitude")], file.path(shinyapp_dir, "metadata.csv"))
-
 # master ordination on which to add/highlight individual sample points
 p_ord_master <- amp_ordinate(
   mms2,
@@ -392,7 +391,11 @@ p_ord_master <- amp_ordinate(
   type = "RDA"
 )
 p_ord_master$layers[[1]] <- NULL
+```
 
+# Generate plots per sample for shiny app
+
+```{r}
 # Sample IDs 1087 and 1514 are duplicated!
 # use a dynamic ID col, could also be SampleID or any other var
 idcol <- "LibID"
@@ -407,26 +410,43 @@ heatmaps <- foreach(
     packages = c("ampvis2", "patchwork", "RColorBrewer")
   )
 ) %dofuture% {
-  d <- suppressMessages(amp_filter_samples(mms2, mxdata == "MicroFlora Danica" | eval(parse(text = idcol)) == id))
-
-  p_heatmap <- amp_heatmap(
+  d <- suppressMessages(amp_filter_samples(mms2, eval(parse(text = idcol)) == id))
+  
+  # heatmap, sample
+  p_heatmap_sample <- amp_heatmap(
     d,
     tax_aggregate = c("Phylum", "Genus"),
     tax_show = 25,
     group_by = "katskole",
+    facet_by = idcol,
+    plot_colorscale = "sqrt",
+    plot_values_size = 3,
+    normalise = FALSE
+  )
+  # heatmap, MX+MFD subset to sample taxa
+  p_heatmap_master_subset <- amp_heatmap(
+    mms2,
+    tax_aggregate = c("Phylum", "Genus"),
+    tax_show = levels(droplevels(p_heatmap_sample$data$Display)),
+    order_y_by = levels(droplevels(p_heatmap_sample$data$Display)),
+    group_by = "kategori",
     facet_by = "mxdata",
     plot_colorscale = "sqrt",
-    plot_values = T,
     plot_values_size = 3,
     normalise = FALSE
   ) +
     theme(
-      axis.text.x = element_text(size = 7),
-      axis.text.y = element_text(size = 7),
-      strip.text.x = element_text(size = 8),
-      legend.position = "none"
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+  p_heatmap <- p_heatmap_sample +
+    p_heatmap_master_subset +
+    plot_layout(
+      nrow = 1,
+      widths = c(1.5, 8.5)
     )
 
+  # ordination
   p_ord_sample <- p_ord_master +
     stat_ellipse(
       data = p_ord_master$data %>% subset(mxdata == "MicroFlora Danica"),
@@ -459,8 +479,8 @@ heatmaps <- foreach(
     file.path(shinyapp_plots_dir, paste0(mms2$metadata[mms2$metadata[[idcol]] %in% id, idcol], "_heatmap.png")),
     plot = p_heatmap,
     create.dir = TRUE,
-    height = 5,
-    width = 5,
+    height = 8,
+    width = 10,
     dpi = 200
   )
 
@@ -468,8 +488,8 @@ heatmaps <- foreach(
     file.path(shinyapp_plots_dir, paste0(mms2$metadata[mms2$metadata[[idcol]] %in% id, idcol], "_ordination.png")),
     plot = p_ord_sample,
     create.dir = TRUE,
-    height = 5,
-    width = 5,
+    height = 8,
+    width = 8,
     dpi = 200
   )
   invisible(plot)
