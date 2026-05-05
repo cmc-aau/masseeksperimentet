@@ -365,7 +365,7 @@ p_heatmap_master <- amp_heatmap(mms2,
   group_by = "kategori",
   facet_by = "mxdata",
   plot_colorscale = "sqrt",
-  plot_values_size = 3,
+  plot_values_size = 4,
   normalise = FALSE
 ) +
   theme(
@@ -420,13 +420,13 @@ heatmaps <- foreach(
     group_by = "katskole",
     facet_by = idcol,
     plot_colorscale = "sqrt",
-    plot_values_size = 3,
+    plot_values_size = 4,
     normalise = FALSE
   ) +
   theme(
-    axis.text.x = element_text(size = 7),
-    axis.text.y = element_text(size = 8),
-    strip.text.x = element_text(size = 8),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 12),
+    strip.text.x = element_text(size = 10),
     legend.position = "none"
   )
   # heatmap, MX+MFD subset to sample taxa
@@ -438,14 +438,14 @@ heatmaps <- foreach(
     group_by = "kategori",
     facet_by = "mxdata",
     plot_colorscale = "sqrt",
-    plot_values_size = 3,
+    plot_values_size = 4,
     normalise = FALSE
   ) +
     theme(
       axis.text.y = element_blank(),
       axis.ticks.y = element_blank(),
-      axis.text.x = element_text(size = 8),
-      strip.text.x = element_text(size = 8),
+      axis.text.x = element_text(size = 14),
+      strip.text.x = element_text(size = 10),
       legend.position = "none"
     )
   p_heatmap <- p_heatmap_sample +
