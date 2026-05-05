@@ -1,9 +1,28 @@
 library("leaflet")
 library("shiny")
+library("bslib")
 
 ui <- fluidPage(
   titlePanel("Masseeksperimentet"),
-  leafletOutput("map", height = "90vh")
+  leafletOutput("map", height = "90vh"),
+  tags$head(
+    tags$style(HTML("
+      /* This targets the ModalDialog container specifically when 'size = l' is used */
+      .modal-dialog.modal-lg { 
+        width: 90% !important; 
+        max-width: 1000px !important; 
+      }
+      /* Optional: ensure the image doesn't get cut off vertically */
+      .modal-body { 
+        max-height: 80vh; 
+        overflow-y: auto; 
+      }
+      .clickable-img:hover { 
+        opacity: 0.8; 
+        cursor: zoom-in; 
+      }
+    "))
+  )
 )
 
 server <- function(input, output, session) {
@@ -28,17 +47,40 @@ server <- function(input, output, session) {
     showModal(
       modalDialog(
         title = paste("Prøve ID:", selected_id, "-", MXmetadata[MXmetadata$LibID == selected_id, "SampleID"]),
+        # This CSS targets the dialog container itself
+        tags$head(
+          tags$style(HTML("
+          @media (min-width: 992px) {
+            .modal-lg { width: 100% !important; max-width: 1200px !important; }
+          }
+          .modal-body { overflow-y: auto; }
+        "))
+        ),
         # load images directly from GitHub instead of bundling them into the app JSON file because of the 100MB file limit on GitHub
         h2("Mest hyppige bakterier"),
         helpText("Top 25 mest hyppige bakterier i jeres prøve sammenlignet med alle prøver i MicroFlora Danica projektet"),
-        img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_heatmap.png"), width = "100%"),
+        tags$a(
+          href = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_heatmap.png"), 
+          target = "_blank",
+          img(
+            src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_heatmap.png"),
+            style = "width: 100%; height: auto; min-width: 800px;"
+          )
+        ),
         hr(),
         h2("Sammenligning med alle andre prøver"),
         helpText("\"Redundancy Analysis (RDA)\" af alle prøver i Masseeksperimentet og MicroFlora Danica projektet, med jeres prøve fremhævet (rød). Afstanden mellem punkterne repræsenterer forskellene imellem alle bakterier i prøverne."),
-        img(src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_ordination.png"), width = "100%"),
+        tags$a(
+          href = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_ordination.png"), 
+          target = "_blank",
+            img(
+            src = paste0("https://raw.githubusercontent.com/cmc-aau/masseeksperimentet/refs/heads/main/plots/", selected_id, "_ordination.png"),
+            style = "width: 100%; height: auto; min-width: 800px;"
+          )
+        ),
         easyClose = TRUE,
         footer = modalButton("Close"),
-        size = "xl"
+        size = "l"
       )
     )
   })
